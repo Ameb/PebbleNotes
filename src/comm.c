@@ -173,6 +173,8 @@ void comm_retrieve_tokens() {
 static void comm_in_received_handler(DictionaryIterator *iter, void *context) {
 	Tuple *tCode, *tMessage, *tScope;
 
+	LOG("Used: %d, free: %d", heap_bytes_used(), heap_bytes_free());
+
 	tCode = dict_find(iter, KEY_CODE);
 	assert(tCode, "Message without code");
 	int code = (int)tCode->value->int32;
@@ -331,7 +333,7 @@ void comm_init() {
 	app_message_register_outbox_sent(comm_out_sent_handler);
 	app_message_register_outbox_failed(comm_out_failed_handler);
 
-	app_message_open(app_message_inbox_size_maximum(), APP_MESSAGE_OUTBOX_SIZE_MINIMUM); // We only need large buffer for inbox
+	app_message_open(MIN(app_message_inbox_size_maximum(), OUTBOX_DESIRED_MAX), APP_MESSAGE_OUTBOX_SIZE_MINIMUM); // We only need large buffer for inbox
 }
 void comm_deinit() {
 	app_message_deregister_callbacks();

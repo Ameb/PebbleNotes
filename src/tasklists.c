@@ -18,8 +18,19 @@ static void tl_draw_row_cb(GContext *ctx, const Layer *cell_layer, MenuIndex *id
 		title = "No tasklists! Please create one from phone/PC";
 	else if(idx->row >= tl_count) // no such item (yet?)
 		title = "<...>";
-	else
+	else if(tl_items[idx->row].title)
 		title = tl_items[idx->row].title;
+	else
+		title = "<OOM>";
+#ifdef PBL_COLOR
+	if(!menu_layer_is_index_selected(mlTasklists, idx) &&
+			idx->row == ts_current_if_complete()) {
+		graphics_context_set_fill_color(ctx, GColorPastelYellow);
+		GRect bounds = layer_get_bounds(cell_layer);
+		graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+	}
+#endif
+
 #ifdef PBL_ROUND
 	// this uses smaller font but properly centers text
 	menu_cell_basic_draw(ctx, cell_layer, title, NULL, NULL);
@@ -39,7 +50,7 @@ static uint16_t tl_get_num_rows_cb(MenuLayer *ml, uint16_t section_index, void *
 static void tl_select_click_cb(MenuLayer *ml, MenuIndex *idx, void *context) {
 	assert(idx->row < tl_count, "Invalid index!"); // this will fire when there are no any lists loaded
 	TL_Item sel = tl_items[idx->row];
-	if(sel.id == ts_current_listId() || comm_is_available()) // already loaded or may be loaded
+	if(sel.id == ts_current_if_complete() || comm_is_available()) // already loaded or may be loaded
 		ts_show(sel.id, sel.title);
 	// or else message will be shown
 }
@@ -71,6 +82,7 @@ static void tl_free_items() {
 /* Public functions */
 
 void tl_init() {
+	LOG("Used: %d, free: %d", heap_bytes_used(), heap_bytes_free());
 	wndTasklists = window_create();
 	assert_oom(wndTasklists, "OOM while creating window");
 	//window_set_click_config_provider(wndTasklists, tl_click_config_provider);
@@ -119,6 +131,7 @@ void tl_set_item(int i, TL_Item data) {
 		strcpy(tl_items[i].title, data.title);
 	} else {
 		assert_oom(false, "OOM while allocating tasklist item title");
+		LOG("Used: %d, free: %d", heap_bytes_used(), heap_bytes_free());
 	}
 	tl_count++;
 	menu_layer_reload_data(mlTasklists);

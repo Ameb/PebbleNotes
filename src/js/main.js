@@ -273,7 +273,7 @@ function sendMessage(data, success, failure) {
 			},
 		   	function(e) {
 				console.log("Failed to send message for transactionId=" + e.data.transactionId +
-						", error is "+("message" in e.error ? e.error.message : "(none)"));
+						", error is "+(e.error && "message" in e.error ? e.error.message : "(none)"));
 				clearTimeout(msgTimeout);
 				if(g_msg_transaction >= 0 && g_msg_transaction != e.data.transactionId)
 					console.log("### Confused! Message not sent, but it is not a current message. "+
@@ -286,7 +286,7 @@ function sendMessage(data, success, failure) {
 				sendNext();
 			}
 		);
-		if(g_msg_transaction === undefined) { // iOS buggy sendAppMessage
+		if(!g_msg_transaction) { // buggy sendAppMessage: on iOS returns undefined, on emulator returns null
 			g_msg_transaction = -1; // just a dummy "non-false" value for sendNext and friends
 		}
 		var msgTimeout = setTimeout(function() {
@@ -378,8 +378,8 @@ function doGetAllLists() {
 					scope: 0,
 					item: i,
 					listId: i,
-					title: g_tasklists[i].title,
-					size: g_tasklists[i].size}); // TODO
+					title: g_tasklists[i].title});
+					//size: g_tasklists[i].size}); // TODO
 		}
 		sendMessage({
 				code: 22, // array end
@@ -581,7 +581,7 @@ Pebble.addEventListener("ready", function(e) {
 	g_access_token = localStorage.access_token;
 	g_refresh_token = localStorage.refresh_token;
 	for(var key in g_options) {
-		if(localStorage[key] !== undefined) {
+		if(localStorage[key] !== undefined && localStorage[key] !== null) {
 			g_options[key] = localStorage[key];
 			if(g_options[key] == 'true')
 				g_options[key] = true;

@@ -5,6 +5,7 @@
 #include "misc.h"
 #include "statusbar.h"
 #include "options.h"
+#include "consts.h"
 
 #ifdef BIGGER_FONT
 #define CUSTOM_FONT "RESOURCE_ID_GOTHIC_24_BOLD"
@@ -82,6 +83,8 @@ static uint16_t ts_get_num_rows_cb(MenuLayer *ml, uint16_t section_index, void *
 		return 1; // there must be a message in statusbar
 	else if(ts_count == 0) // no data
 		return 1;
+	else if(!ts_items) // OOM
+		return 1;
 	else
 		return ts_count;
 }
@@ -119,6 +122,8 @@ static void ts_twoline_cell_draw(GContext *ctx, const Layer *layer, char *title,
 	if(icon) {
 		buf = malloc(strlen(title) + ICON_SPACES + 1);
 		assert_oom(buf, "OOM while allocating draw buffer!");
+		if(!buf)
+			LOG("Used: %d, free: %d", heap_bytes_used(), heap_bytes_free());
 		memset(buf, ' ', ICON_SPACES);
 		strcpy(buf+ICON_SPACES, title);
 	} else {
@@ -165,8 +170,12 @@ static void ts_draw_row_cb(GContext *ctx, const Layer *cell_layer, MenuIndex *id
 		title = "<...>";
 	else if(ts_max_count == 1 && ts_items[idx->row].title[0] == '\0') // the only item which is empty
 		title = "<empty>";
+	else if(!ts_items)
+		title = "<OOM>";
 	else {
 		title = ts_items[idx->row].title;
+		if(!title)
+			title = "<OOM>";
 		icon = bmpTasks[ts_items[idx->row].done];
 		is_done = ts_items[idx->row].done;
 	}
@@ -198,6 +207,10 @@ static void ts_select_long_click_cb(MenuLayer *ml, MenuIndex *idx, void *context
 
 	if(ts_max_count == 0 || idx->row >= ts_count)
 		return; // don't do anything if we have no data for this row
+	if(heap_bytes_free() < OOM_MIN_TASKINFO) {
+		sb_show("Not enough memory");
+		return;
+	}
 	TS_Item task = ts_items[idx->row];
 	ti_show(listId, task);
 }
@@ -224,9 +237,17 @@ static void ts_window_unload(Window *wnd) {
 	menu_layer_destroy(mlTasks);
 }
 static void ts_free_items() {
+	LOG("Used: %d, free: %d", heap_bytes_used(), heap_bytes_free());
+	LOG("Freeing items");
 	for(int i=0; i<ts_count; i++)
+	{
 		free(ts_items[i].title);
+		if(ts_items[i].notes)
+			free(ts_items[i].notes);
+	}
 	free(ts_items);
+	ts_items = NULL;
+	LOG("Used: %d, free: %d", heap_bytes_used(), heap_bytes_free());
 }
 
 /* Public functions */
@@ -254,7 +275,8 @@ void ts_deinit() {
 void ts_show(int id, char* title) {
 	LOG("Showing tasks for listId=%d", id);
 	if(id != listId) { // not the same list; clearing and will reload
-		ts_items = NULL;
+		if(ts_items)
+			ts_free_items();
 		ts_count = -1;
 		ts_max_count = -1;
 	} else if(options_task_actions_position() == 1) {
@@ -276,6 +298,13 @@ bool ts_is_active() {
 int ts_current_listId() {
 	return listId;
 }
+int ts_current_if_complete() {
+	if(listId != -1 && ts_count > 0 && !ts_items) {
+		// OOM state
+		return -1;
+	}
+	return listId;
+}
 void ts_set_count(int count) {
 	LOG("Setting count: %d", count);
 	if(ts_items)
@@ -283,7 +312,7 @@ void ts_set_count(int count) {
 	ts_items = malloc(sizeof(TS_Item)*count);
 	ts_count = 0;
 	ts_max_count = count;
-	if(!ts_items) {
+	if(count>0 && !ts_items) {
 		APP_LOG(APP_LOG_LEVEL_ERROR, "OOM while allocating items!");
 		ts_max_count = 0;
 	}
@@ -295,21 +324,29 @@ void ts_set_item(int i, TS_Item data) {
 	
 	ts_items[i].id = data.id;
 	ts_items[i].done = data.done;
-	ts_items[i].title = malloc(strlen(data.title)+1);
-	if(ts_items[i].title) {
-		strcpy(ts_items[i].title, data.title);
-	} else {
-		APP_LOG(APP_LOG_LEVEL_ERROR, "OOM while allocating title!");
-		sb_show("OOM");
-	}
-	if(data.notes) {
-		ts_items[i].notes = malloc(strlen(data.notes)+1);
-		if(ts_items[i].notes) {
-			strcpy(ts_items[i].notes, data.notes);
+	int tlen = strlen(data.title);
+	if(heap_bytes_free() - tlen > OOM_SAFEGUARD) {
+		ts_items[i].title = malloc(tlen+1);
+		if(ts_items[i].title) {
+			strcpy(ts_items[i].title, data.title);
 		} else {
-			APP_LOG(APP_LOG_LEVEL_ERROR, "OOM while allocating notes!");
+			APP_LOG(APP_LOG_LEVEL_ERROR, "OOM while allocating title!");
 			sb_show("OOM");
 		}
+	} else
+		ts_items[i].title = "<OOM>";
+	if(data.notes) {
+		int nlen = strlen(data.notes);
+		if(heap_bytes_free() - nlen > OOM_SAFEGUARD) {
+			ts_items[i].notes = malloc(nlen+1);
+			if(ts_items[i].notes) {
+				strcpy(ts_items[i].notes, data.notes);
+			} else {
+				APP_LOG(APP_LOG_LEVEL_ERROR, "OOM while allocating notes!");
+				sb_show("OOM");
+			}
+		} else
+			ts_items[i].notes = "<OOM>";
 	} else
 		ts_items[i].notes = NULL;
 	ts_count++;
@@ -325,6 +362,7 @@ void ts_append_item(TS_Item data) {
 	LOG("Additional item with id %d", data.id);
 	assert(ts_max_count >= 0, "Trying to append item while not initialized!");
 	assert(ts_max_count == ts_count, "Trying to add task while not fully loaded!");
+	assert_oom(heap_bytes_free() > OOM_SAFEGUARD, "Almost OOM - ignoring item!");
 	ts_count++;
 	ts_max_count++;
 	// increase array memory
